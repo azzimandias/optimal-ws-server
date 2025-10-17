@@ -29,17 +29,6 @@ const io = new Server(httpServer, {
   allowEIO3: true,
 })
 
-// API Routes
-const apiRoutes = [
-  // SMS/Чат события - РАЗДЕЛЬНЫЕ
-  '/api/sms/new-message',
-  '/api/sms/update-message',
-  '/api/sms/edit-message',
-  '/api/sms/reply-message',
-  '/api/sms/delete-message',
-  '/api/sms/status-update', // (прочитано, доставлено)
-]
-
 // ОБРАБОТЧИКИ СОБЫТИЙ SOCKET.IO ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 // TODO: Заменить на актуальные переменные (chatId, user.id и т.д.)
@@ -64,16 +53,16 @@ io.on('connection', (socket) => {
   })
 
   // Подписка на список
-  socket.on('subscribeToList', (listId) => {
-    socket.join(`list_${listId}`)
-    console.log(`User ${socket.id} subscribed to list ${listId}`)
-  })
-
-  // Отписка от списка
-  socket.on('unsubscribeFromList', (listId) => {
-    socket.leave(`list_${listId}`)
-    console.log(`User ${socket.id} unsubscribed from list ${listId}`)
-  })
+  // socket.on('subscribeToList', (listId) => {
+  //   socket.join(`list_${listId}`)
+  //   console.log(`User ${socket.id} subscribed to list ${listId}`)
+  // })
+  //
+  // // Отписка от списка
+  // socket.on('unsubscribeFromList', (listId) => {
+  //   socket.leave(`list_${listId}`)
+  //   console.log(`User ${socket.id} unsubscribed from list ${listId}`)
+  // })
 
   // ✅ НОВЫЕ: Обработчики для клиентских событий с унифицированными названиями
 
@@ -140,10 +129,21 @@ io.on('connection', (socket) => {
 
 // ОБРАБОТЧИКИ API ROUTES ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
+// API Routes
+const apiRoutes = [
+  // SMS/Чат события - РАЗДЕЛЬНЫЕ
+  '/api/sms/new-sms', // поменять у бо на message
+  '/api/sms/update-message',
+  '/api/sms/edit-message',
+  '/api/sms/reply-message',
+  '/api/sms/delete-message',
+  '/api/sms/status-update', // (прочитано, доставлено)
+]
+
 apiRoutes.forEach((route) => {
   app.post(route, (req, res) => {
     try {
-      const { room, message, uuid, messageId, replyTo, status } = req.body
+      const { room, message, uuid, messageId, replyTo, status, left, right } = req.body
 
       if (!room) {
         return res.status(400).json({ error: 'Room is required' })
@@ -153,7 +153,7 @@ apiRoutes.forEach((route) => {
       const eventName = route.split('/').pop().replace(/-/g, ':')
 
       // Отправляем WebSocket событие в указанную комнату
-      io.to(room).emit(eventName, { message, uuid, messageId, replyTo, status })
+      io.to(room).emit(eventName, { message, uuid, messageId, replyTo, status, left, right })
 
       console.log(`📡 [WS] Event "${eventName}" sent to room "${room}"`)
 
