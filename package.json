@@ -1,0 +1,38 @@
+{
+  "name": "arstel_server",
+  "version": "1.0.0",
+  "description": "BFF-сервер для frontend + PHP backend",
+  "main": "app.js",
+  "scripts": {
+    "dev": "nodemon app.js",
+    "start": "node app.js",
+    "kill": "pm2 kill",
+    "stop:pm2": "pm2 stop ecosystem.config.js",
+    "start:pm2": "pm2 start ecosystem.config.js",
+    "reload": "pm2 reload ecosystem.config.js",
+    "push": "git add . && git commit -m 'update' && git push",
+    "fetch-from-main-to-local__and__merge": "git fetch origin && git merge origin/main",
+    "safety-reload": "pm2 reload ecosystem.config.js --update-env && sleep 5 && pm2 logs",
+    "reload-with-dependencies-update": "npm i && pm2 reload ecosystem.config.js --update-env && sleep 3 && pm2 logs",
+    "critical-graceful-update": "pm2 stop ecosystem.config.js && npm i && pm2 start ecosystem.config.js && sleep 10 && pm2 logs",
+    "full-restart": "pm2 stop ecosystem.config.js && pm2 delete ecosystem.config.js && npm i && pm2 start ecosystem.config.js && sleep 15 && pm2 logs"
+  },
+  "author": "Demian Semenov",
+  "license": "MIT",
+  "dependencies": {
+    "@grpc/grpc-js": "^1.13.3",
+    "@pm2/io": "^6.1.0",
+    "ajv": "^8.17.1",
+    "axios": "^1.12.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^4.19.2",
+    "fetch": "^1.1.0",
+    "moment": "^2.30.1",
+    "socket.io": "^4.8.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
