@@ -30,89 +30,17 @@ const io = new Server(httpServer, {
 })
 
 // ОБРАБОТЧИКИ СОБЫТИЙ SOCKET.IO ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-// TODO: Заменить на актуальные переменные (chatId, user.id и т.д.)
-
-// Заметки:
-// socket.id = "КТО" (идентификатор подключения)
-// room = "НА ЧТО" (идентификатор комнаты, например, чат или список)
-
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id)
 
   // Подписка на комнату (сохраняем для обратной совместимости)
-  socket.on('subscribe', (room) => {
-    socket.join(room)
-    console.log(`User ${socket.id} joined room ${room}`)
-  })
+  socket.on('subscribeToChat', (userId) => {
+    const userRoom = `user:${userId}`;
+    socket.join(userRoom);
+    console.log(`User ${socket.id} joined personal room ${userRoom}`);
 
-  // ✅ НОВЫЙ: Подписка на комнату чата (унифицированный naming convention)
-  socket.on('room:join', (room) => {
-    socket.join(room)
-    console.log(`[room:join] User ${socket.id} joined room ${room}`)
-  })
-
-  // Подписка на список
-  // socket.on('subscribeToList', (listId) => {
-  //   socket.join(`list_${listId}`)
-  //   console.log(`User ${socket.id} subscribed to list ${listId}`)
-  // })
-  //
-  // // Отписка от списка
-  // socket.on('unsubscribeFromList', (listId) => {
-  //   socket.leave(`list_${listId}`)
-  //   console.log(`User ${socket.id} unsubscribed from list ${listId}`)
-  // })
-
-  // ✅ НОВЫЕ: Обработчики для клиентских событий с унифицированными названиями
-
-  // Отправка нового сообщения
-  socket.on('sms:new_message', (msg) => {
-    console.log(`[sms:new_message] New message from ${socket.id}:`, msg)
-    // Здесь должна быть логика сохранения в БД
-    // Затем рассылаем всем подписанным на комнату чата
-    io.to(msg.chat_id).emit('sms:new_message', { 
-      message: msg,
-      uuid: msg.uuid,
-      timestamp: new Date().toISOString()
-    })
-  })
-
-  // Обновление сообщения
-  socket.on('sms:update_message', (data) => {
-    console.log(`[sms:update_message] Update message from ${socket.id}:`, data)
-    io.to(data.chat_id).emit('sms:update_message', data)
-  })
-
-  // Редактирование сообщения
-  socket.on('sms:edit_message', (data) => {
-    console.log(`[sms:edit_message] Edit message from ${socket.id}:`, data)
-    io.to(data.chat_id).emit('sms:edit_message', data)
-  })
-
-  // Ответ на сообщение
-  socket.on('sms:reply_message', (data) => {
-    console.log(`[sms:reply_message] Reply message from ${socket.id}:`, data)
-    io.to(data.chat_id).emit('sms:reply_message', data)
-  })
-
-  // Удаление сообщения
-  socket.on('sms:delete_message', (data) => {
-    console.log(`[sms:delete_message] Delete message from ${socket.id}:`, data)
-    io.to(data.chat_id).emit('sms:delete_message', data)
-  })
-
-  // Обновление статуса сообщения
-  socket.on('sms:status_update', (data) => {
-    console.log(`[sms:status_update] Status update from ${socket.id}:`, data)
-    io.to(data.chat_id).emit('sms:status_update', data)
-  })
-
-  // Инициализация списка чатов
-  socket.on('chat:list:init', (userId) => {
-    console.log(`[chat:list:init] User ${socket.id} requested chat list for user ${userId}`)
-    // Здесь логика загрузки списка чатов из БД
-    // socket.emit('chat:list:init', chatList)
+    // Также подписываем на общую комнату для обратной совместимости
+    socket.join('CHAT');
   })
 
   // Обработка ошибок подключения
@@ -128,39 +56,28 @@ io.on('connection', (socket) => {
 // ОБРАБОТЧИКИ СОБЫТИЙ SOCKET.IO ----------------------------------------------------------------
 
 // ОБРАБОТЧИКИ API ROUTES ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-// API Routes
 const apiRoutes = [
-  // SMS/Чат события - РАЗДЕЛЬНЫЕ
   '/api/sms/new-sms', // поменять у бо на message
-  '/api/sms/update-message',
-  '/api/sms/edit-message',
-  '/api/sms/reply-message',
-  '/api/sms/delete-message',
-  '/api/sms/status-update', // (прочитано, доставлено)
 ]
 
 apiRoutes.forEach((route) => {
   app.post(route, (req, res) => {
+    console.log(`📡 [WS] Route "${route}"`);
+    Object.entries(req.body).forEach(([key, value]) => {
+      console.log(`${key}: ${value}`);
+    });
     try {
-      const { room, message, uuid, messageId, replyTo, status, left, right } = req.body
+      const { left, right } = req.body;
+      const eventName = route.split('/').pop().replace(/-/g, ':');
+      const recipientId = left.to.id;
+      const recipientRoom = `user:${recipientId}`;
 
-      if (!room) {
-        return res.status(400).json({ error: 'Room is required' })
-      }
+      io.to(recipientRoom).emit(eventName, { left, right });
 
-      // ✅ ИСПРАВЛЕНО: Генерируем имя события через двоеточие
-      const eventName = route.split('/').pop().replace(/-/g, ':')
-
-      // Отправляем WebSocket событие в указанную комнату
-      io.to(room).emit(eventName, { message, uuid, messageId, replyTo, status, left, right })
-
-      console.log(`📡 [WS] Event "${eventName}" sent to room "${room}"`)
-
-      res.json({ status: 'ok' })
+      res.json({ status: 'ok' });
     } catch (error) {
-      console.error('Error in API route:', error)
-      res.status(500).json({ error: 'Internal server error' })
+      console.error('Error in API route:', error);
+      res.status(500).json({ error: 'Internal server error' });
     }
   })
 })
