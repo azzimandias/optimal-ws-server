@@ -69,12 +69,12 @@ apiRoutes.forEach((route) => {
     try {
       const { left, right } = req.body;
       const eventName = route.split('/').pop().replace(/-/g, ':');
-      const senderId = left.from.id;
-      const senderRoom = `user:${senderId}`;
+      //const senderId = left.from.id;
+      //const senderRoom = `user:${senderId}`;
       const recipientId = left.to.id;
       const recipientRoom = `user:${recipientId}`;
 
-      io.to(senderRoom).emit(eventName, { left });
+      //io.to(senderRoom).emit(eventName, { left });
       io.to(recipientRoom).emit(eventName, { left, right });
 
       res.json({ status: 'ok' });
