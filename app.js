@@ -58,32 +58,45 @@ io.on('connection', (socket) => {
 // ОБРАБОТЧИКИ API ROUTES ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 const apiRoutes = [
   '/api/sms/new-sms', // поменять у бо на message
+  '/api/sms/update-sms'
 ]
 
-apiRoutes.forEach((route) => {
-  app.post(route, (req, res) => {
-    console.log(`📡 [WS] Route "${route}"`);
-    Object.entries(req.body).forEach(([key, value]) => {
-      console.log(`${key}: ${value}`);
-    });
-    try {
-      const { left, right } = req.body;
-      const eventName = route.split('/').pop().replace(/-/g, ':');
-      //const senderId = left.from.id;
-      //const senderRoom = `user:${senderId}`;
-      const recipientId = left.to.id;
-      const recipientRoom = `user:${recipientId}`;
+app.post('/api/sms/new-sms', (req, res) => {
+  try {
+    const route = '/api/sms/new-sms';
+    const { left, right } = req.body;
+    const eventName = route.split('/').pop().replace(/-/g, ':');
+    const recipientId = left.to.id;
+    const recipientRoom = `user:${recipientId}`;
 
-      //io.to(senderRoom).emit(eventName, { left });
-      io.to(recipientRoom).emit(eventName, { left, right });
+    io.to(recipientRoom).emit(eventName, { left, right });
 
-      res.json({ status: 'ok' });
-    } catch (error) {
-      console.error('Error in API route:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  })
-})
+    res.json({ status: 'ok' });
+  } catch (error) {
+    console.error('Error in API route:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+app.post('/api/sms/update-sms', (req, res) => {
+  try {
+    const route = '/api/sms/update-sms';
+    const { sms } = req.body;
+    //for (var key in sms){
+    //  console.log( key + ": " + sms[key]);
+    //}
+    const eventName = route.split('/').pop().replace(/-/g, ':');
+
+    const recipientId = sms.from;
+    const recipientRoom = `user:${recipientId}`;
+
+    io.to(recipientRoom).emit(eventName, { sms });
+
+    res.json({ status: 'ok' });
+  } catch (error) {
+    console.error('Error in API route:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // ОБРАБОТЧИКИ API ROUTES ----------------------------------------------------------------
 
