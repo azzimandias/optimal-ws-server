@@ -29,29 +29,164 @@ const io = new Server(httpServer, {
   allowEIO3: true,
 })
 
+const activeBidHighlights  = new Map();
+
 // ОБРАБОТЧИКИ СОБЫТИЙ SOCKET.IO ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id)
+    console.log('User connected:', socket.id)
 
-  // Подписка на комнату (сохраняем для обратной совместимости)
-  socket.on('subscribeToChat', (userId) => {
-    const userRoom = `user:${userId}`;
-    socket.join(userRoom);
-    console.log(`User ${socket.id} joined personal room ${userRoom}`);
+    /* + CHAT */
+    // Подписка на комнату
+    socket.on('subscribeToChat', (userId) => {
+        const userRoom = `user:${userId}`;
+        socket.join(userRoom);
+        console.log(`User ${socket.id} joined personal room ${userRoom}`);
+        socket.join('CHAT');
+    })
+    /* - CHAT */
 
-    // Также подписываем на общую комнату для обратной совместимости
-    socket.join('CHAT');
-  })
+    /* + BID LIST */
+    socket.on('SUBSCRIBE_BID_ACTIVITY', (userId) => {
+        socket.join('bidActivityMonitor');
+        console.log(`📊 [WS] Client ${socket.id} joined bid activity monitoring, userId: ${userId}`);
 
-  // Обработка ошибок подключения
-  socket.on('connect_error', (err) => {
-    console.log('Connection error:', err.message, err.description, err.context)
-  })
+        const activeHighlights = Array.from(activeBidHighlights.entries()).map(([userId, data]) => ({
+            userId: userId,
+            userFIO: data.userFIO,
+            bidId: data.bidId,
+            socketId: data.socketId,
+            timestamp: data.timestamp
+        }));
 
-  // Обработка отключения
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id)
-  })
+        socket.emit('ACTIVE_HIGHLIGHTS_LIST', {
+            event: 'ACTIVE_HIGHLIGHTS_LIST',
+            activeHighlights: activeHighlights,
+            count: activeHighlights.length,
+            timestamp: new Date().toISOString()
+        });
+
+        console.log(`📋 [WS] Sent ${activeHighlights.length} active highlights to new observer ${socket.id}`);
+    });
+
+    socket.on('UNSUBSCRIBE_BID_ACTIVITY', (userId) => {
+        socket.leave('bidActivityMonitor');
+        console.log(`📝 [WS] Client ${socket.id} left bid activity monitoring, userId: ${userId}`);
+    });
+
+    socket.on('HIGHLIGHT_BID', (obj) => {
+        const bidPageRoom = `userHighlight:${obj.userId}:${obj.bidId}:${obj.timestamp}`;
+        socket.join(bidPageRoom);
+        console.log(`🎯 User ${obj.userId} joined bidPage room ${bidPageRoom}`);
+
+        activeBidHighlights.set(obj.userId, {
+            userId: obj.userId,
+            userFIO: obj.userFIO,
+            bidId: obj.bidId,
+            socketId: socket.id,
+            timestamp: new Date().toISOString(),
+            joinedAt: new Date().toISOString()
+        });
+
+        const notificationData = {
+            event: 'USER_SUBSCRIBED_TO_BID',
+            userId: obj.userId,
+            userFIO: obj.userFIO,
+            bidId: obj.bidId,
+            socketId: socket.id,
+            timestamp: new Date().toISOString(),
+            activeHighlightsCount: activeBidHighlights.size,
+            activeUsers: Array.from(activeBidHighlights.keys())
+        };
+
+        io.to('bidActivityMonitor').emit('HIGHLIGHT_BID', notificationData);
+        console.log(`📤 [WS] Notified bid activity monitors about subscription. Total active: ${activeBidHighlights.size}`);
+    });
+
+    socket.on('UNHIGHLIGHT_BID', (obj) => {
+        const bidPageRoom = `userHighlight:${obj.userId}:${obj.bidId}:${obj.timestamp}`;
+        socket.leave(bidPageRoom);
+
+        const wasRemoved = activeBidHighlights.delete(obj.userId);
+
+        if (wasRemoved) {
+            const unsubscriptionData = {
+                event: 'USER_UNSUBSCRIBED_FROM_BID',
+                userId: obj.userId,
+                userFIO: obj.userFIO,
+                bidId: obj.bidId,
+                socketId: socket.id,
+                action: 'unsubscribed',
+                timestamp: new Date().toISOString(),
+                reason: 'manual',
+                activeHighlightsCount: activeBidHighlights.size,
+                activeUsers: Array.from(activeBidHighlights.keys())
+            };
+
+            io.to('bidActivityMonitor').emit('UNHIGHLIGHT_BID', unsubscriptionData);
+            console.log(`📤 [WS] Notified about UNSUBSCRIPTION: user ${obj.userId} from bid ${obj.bidId}. Total active: ${activeBidHighlights.size}`);
+        }
+    });
+
+    socket.on('GET_ACTIVE_HIGHLIGHTS', () => {
+        const activeHighlights = Array.from(activeBidHighlights.entries()).map(([userId, data]) => ({
+            userId: userId,
+            userFIO: data.userFIO,
+            bidId: data.bidId,
+            socketId: data.socketId,
+            timestamp: data.timestamp
+        }));
+
+        socket.emit('ACTIVE_HIGHLIGHTS_LIST', {
+            event: 'ACTIVE_HIGHLIGHTS_LIST',
+            activeHighlights: activeHighlights,
+            count: activeHighlights.length,
+            timestamp: new Date().toISOString()
+        });
+    });
+    /* - BID LIST */
+
+    // Обработка ошибок подключения
+    socket.on('connect_error', (err) => {
+        console.log('Connection error:', err.message, err.description, err.context)
+    })
+
+    // Обработка отключения
+    socket.on('disconnect', (reason) => {
+        console.log(`❌ User disconnected: ${socket.id}, reason: ${reason}`);
+
+        let disconnectedUser = null;
+
+        for (let [userId, data] of activeBidHighlights.entries()) {
+            if (data.socketId === socket.id) {
+                disconnectedUser = { userId, data };
+                break;
+            }
+        }
+
+        if (disconnectedUser) {
+            const { userId, data } = disconnectedUser;
+
+            activeBidHighlights.delete(userId);
+
+            const disconnectData = {
+                event: 'USER_DISCONNECTED_FROM_BID',
+                userId: userId,
+                userFIO: data.userFIO,
+                bidId: data.bidId,
+                socketId: socket.id,
+                action: 'disconnected',
+                timestamp: new Date().toISOString(),
+                reason: reason,
+                joinedAt: data.joinedAt,
+                duration: Date.now() - new Date(data.joinedAt).getTime(),
+                activeHighlightsCount: activeBidHighlights.size,
+                activeUsers: Array.from(activeBidHighlights.keys())
+            };
+
+            io.to('bidActivityMonitor').emit('UNHIGHLIGHT_BID', disconnectData);
+            console.log(`📤 [WS] Notified about DISCONNECTION: user ${userId} from bid ${data.bidId}. Total active: ${activeBidHighlights.size}`);
+        }
+    });
 })
 // ОБРАБОТЧИКИ СОБЫТИЙ SOCKET.IO ----------------------------------------------------------------
 
