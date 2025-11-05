@@ -29,32 +29,46 @@ const io = new Server(httpServer, {
   allowEIO3: true,
 })
 
+const activeOrgHighlights  = new Map();
 const activeBidHighlights  = new Map();
-activeBidHighlights.clear();
-console.log('🧹 Cleared previous active bid highlights');
 
-function getAllActiveConnections() {
+activeOrgHighlights.clear();
+activeBidHighlights.clear();
+console.log('🧹 Cleared previous active highlights');
+
+const getAllActiveConnectionsOrgs = () => {
+    const allConnections = [];
+    for (const userConnections of activeOrgHighlights.values()) {
+        allConnections.push(...userConnections);
+    }
+    return allConnections;
+};
+const getActiveHighlightsOrgs = () => {
+    return Array.from(activeOrgHighlights.entries()).map(([userId, data]) => ({
+        userId: userId,
+        userFIO: data.userFIO,
+        bidId: data.bidId,
+        socketId: data.socketId,
+        timestamp: data.timestamp
+    }));
+};
+
+const getAllActiveConnectionsBids = () => {
     const allConnections = [];
     for (const userConnections of activeBidHighlights.values()) {
         allConnections.push(...userConnections);
     }
     return allConnections;
-}
-
-function groupConnectionsByUser(connections) {
-    const grouped = {};
-    connections.forEach(conn => {
-        if (!grouped[conn.userId]) {
-            grouped[conn.userId] = {
-                userId: conn.userId,
-                userFIO: conn.userFIO,
-                connections: []
-            };
-        }
-        grouped[conn.userId].connections.push(conn);
-    });
-    return Object.values(grouped);
-}
+};
+const getActiveHighlightsBids = () => {
+    return Array.from(activeBidHighlights.entries()).map(([userId, data]) => ({
+        userId: userId,
+        userFIO: data.userFIO,
+        bidId: data.bidId,
+        socketId: data.socketId,
+        timestamp: data.timestamp
+    }));
+};
 
 // ОБРАБОТЧИКИ СОБЫТИЙ SOCKET.IO ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 io.on('connection', (socket) => {
@@ -70,19 +84,115 @@ io.on('connection', (socket) => {
     })
     /* - CHAT */
 
+    /* + ORG LIST */
+    socket.on('SUBSCRIBE_ORG_ACTIVITY', (userId) => {
+        socket.join('orgActivityMonitor');
+        console.log(`📊 [WS] Client ${socket.id} joined org activity monitoring, userId: ${userId}`);
+
+        const allActiveConnections = getAllActiveConnectionsOrgs();
+        const activeHighlights = getActiveHighlightsOrgs();
+        socket.emit('ACTIVE_HIGHLIGHTS_LIST_ORGS', {
+            event: 'ACTIVE_HIGHLIGHTS_LIST_ORGS',
+            activeHighlights: activeHighlights,
+            count: activeHighlights.length,
+            timestamp: new Date().toISOString(),
+            activeUsers: allActiveConnections,
+        });
+
+        console.log(`📋 [WS] Sent ${activeHighlights.length} active highlights to new observer ${socket.id}`);
+    })
+    socket.on('UNSUBSCRIBE_ORG_ACTIVITY', (userId) => {
+        socket.leave('orgActivityMonitor');
+        console.log(`📝 [WS] Client ${socket.id} left activity monitoring, userId: ${userId}`);
+    });
+    socket.on('HIGHLIGHT_ORG', (obj) => {
+        const orgPageRoom = `userHighlight:${obj.userId}:${obj.bidId}`;
+        socket.join(orgPageRoom);
+        console.log(`🎯 User ${obj.userId} joined bidPage room ${orgPageRoom}`);
+
+        const connection = {
+            userId: obj.userId,
+            userFIO: obj.userFIO,
+            orgId: obj.orgId,
+            socketId: socket.id,
+            action: obj.action,
+            timestamp: new Date().toISOString(),
+            joinedAt: new Date().toISOString(),
+            connectionId: `${obj.userId}_${socket.id}_${obj.orgId}` // уникальный ID подключения
+        };
+        if (!activeOrgHighlights.has(obj.userId)) {
+            activeOrgHighlights.set(obj.userId, []);
+        }
+        const userConnections = activeOrgHighlights.get(obj.userId);
+        const existingConnectionIndex = userConnections.findIndex(conn =>
+            conn.connectionId === connection.connectionId
+        );
+
+        if (existingConnectionIndex === -1) {
+            // Новое подключение - добавляем
+            userConnections.push(connection);
+            console.log(`✅ Added new connection: ${connection.connectionId}`);
+        } else {
+            // Существующее подключение - обновляем
+            userConnections[existingConnectionIndex] = connection;
+            console.log(`🔄 Updated existing connection: ${connection.connectionId}`);
+        }
+
+        const allActiveConnections = getAllActiveConnectionsOrgs();
+        const activeHighlights = getActiveHighlightsOrgs();
+        io.to('orgActivityMonitor').emit('ACTIVE_HIGHLIGHTS_LIST_ORGS', {
+            event: 'ACTIVE_HIGHLIGHTS_LIST_ORGS',
+            activeHighlights: activeHighlights,
+            count: activeHighlights.length,
+            timestamp: new Date().toISOString(),
+            activeUsers: allActiveConnections,
+        });
+        console.log(`📤 [WS] Notified org activity monitors about subscription. Total active: ${activeOrgHighlights.size}`);
+    });
+    socket.on('UNHIGHLIGHT_ORG', (obj) => {
+        const orgPageRoom = `userHighlight:${obj.userId}:${obj.orgId}`;
+        socket.leave(orgPageRoom);
+
+        if (activeOrgHighlights.has(obj.userId)) {
+            const userConnections = activeOrgHighlights.get(obj.userId);
+            const connectionId = `${obj.userId}_${socket.id}_${obj.orgId}`;
+            const initialLength = userConnections.length;
+            activeOrgHighlights.set(obj.userId,
+                userConnections.filter(conn => conn.connectionId !== connectionId)
+            );
+
+            const finalLength = activeOrgHighlights.get(obj.userId).length;
+            const wasRemoved = initialLength > finalLength;
+
+            if (finalLength === 0) {
+                activeOrgHighlights.delete(obj.userId);
+            }
+
+            if (wasRemoved) {
+                const allActiveConnections = getAllActiveConnectionsOrgs();
+                const activeHighlights = getActiveHighlightsOrgs();
+                io.to('orgActivityMonitor').emit('ACTIVE_HIGHLIGHTS_LIST_ORGS', {
+                    event: 'ACTIVE_HIGHLIGHTS_LIST_ORGS',
+                    activeHighlights: activeHighlights,
+                    count: activeHighlights.length,
+                    timestamp: new Date().toISOString(),
+                    activeUsers: allActiveConnections,
+                });
+                console.log(`📤 [WS] Removed connection: ${connectionId}. User connections: ${finalLength}, Global: ${allActiveConnections.length}`);
+            } else {
+                console.log(`❌ Connection not found: ${connectionId}`);
+            }
+        }
+    });
+    /* - ORG LIST */
+
     /* + BID LIST */
     socket.on('SUBSCRIBE_BID_ACTIVITY', (userId) => {
         socket.join('bidActivityMonitor');
         console.log(`📊 [WS] Client ${socket.id} joined bid activity monitoring, userId: ${userId}`);
 
-        const activeHighlights = Array.from(activeBidHighlights.entries()).map(([userId, data]) => ({
-            userId: userId,
-            userFIO: data.userFIO,
-            bidId: data.bidId,
-            socketId: data.socketId,
-            timestamp: data.timestamp
-        }));
-        const allActiveConnections = getAllActiveConnections();
+        const allActiveConnections = getAllActiveConnectionsBids();
+        const activeHighlights = getActiveHighlightsBids();
         socket.emit('ACTIVE_HIGHLIGHTS_LIST_BIDS', {
             event: 'ACTIVE_HIGHLIGHTS_LIST_BIDS',
             activeHighlights: activeHighlights,
@@ -93,12 +203,10 @@ io.on('connection', (socket) => {
 
         console.log(`📋 [WS] Sent ${activeHighlights.length} active highlights to new observer ${socket.id}`);
     });
-
     socket.on('UNSUBSCRIBE_BID_ACTIVITY', (userId) => {
         socket.leave('bidActivityMonitor');
         console.log(`📝 [WS] Client ${socket.id} left bid activity monitoring, userId: ${userId}`);
     });
-
     socket.on('HIGHLIGHT_BID', (obj) => {
         const bidPageRoom = `userHighlight:${obj.userId}:${obj.bidId}`;
         socket.join(bidPageRoom);
@@ -127,14 +235,8 @@ io.on('connection', (socket) => {
             console.log(`⚠️ Connection already exists: ${connection.connectionId}`);
         }
 
-        const allActiveConnections = getAllActiveConnections();
-        const activeHighlights = Array.from(activeBidHighlights.entries()).map(([userId, data]) => ({
-            userId: userId,
-            userFIO: data.userFIO,
-            bidId: data.bidId,
-            socketId: data.socketId,
-            timestamp: data.timestamp
-        }));
+        const allActiveConnections = getAllActiveConnectionsBids();
+        const activeHighlights = getActiveHighlightsBids();
         io.to('bidActivityMonitor').emit('ACTIVE_HIGHLIGHTS_LIST_BIDS', {
             event: 'ACTIVE_HIGHLIGHTS_LIST_BIDS',
             activeHighlights: activeHighlights,
@@ -142,22 +244,8 @@ io.on('connection', (socket) => {
             timestamp: new Date().toISOString(),
             activeUsers: allActiveConnections,
         });
-
-        /*const notificationData = {
-            event: 'USER_SUBSCRIBED_TO_BID',
-            userId: obj.userId,
-            userFIO: obj.userFIO,
-            bidId: obj.bidId,
-            socketId: socket.id,
-            timestamp: new Date().toISOString(),
-            activeHighlightsCount: allActiveConnections.length,
-            activeUsers: allActiveConnections,
-            userConnectionsCount: userConnections.length // сколько подключений у этого пользователя
-        };
-        io.to('bidActivityMonitor').emit('HIGHLIGHT_BID', notificationData);*/
         console.log(`📤 [WS] Notified bid activity monitors about subscription. Total active: ${activeBidHighlights.size}`);
     });
-
     socket.on('UNHIGHLIGHT_BID', (obj) => {
         const bidPageRoom = `userHighlight:${obj.userId}:${obj.bidId}`;
         socket.leave(bidPageRoom);
@@ -178,14 +266,8 @@ io.on('connection', (socket) => {
             }
 
             if (wasRemoved) {
-                const allActiveConnections = getAllActiveConnections();
-                const activeHighlights = Array.from(activeBidHighlights.entries()).map(([userId, data]) => ({
-                    userId: userId,
-                    userFIO: data.userFIO,
-                    bidId: data.bidId,
-                    socketId: data.socketId,
-                    timestamp: data.timestamp
-                }));
+                const allActiveConnections = getAllActiveConnectionsBids();
+                const activeHighlights = getActiveHighlightsBids();
                 io.to('bidActivityMonitor').emit('ACTIVE_HIGHLIGHTS_LIST_BIDS', {
                     event: 'ACTIVE_HIGHLIGHTS_LIST_BIDS',
                     activeHighlights: activeHighlights,
@@ -194,40 +276,10 @@ io.on('connection', (socket) => {
                     activeUsers: allActiveConnections,
                 });
                 console.log(`📤 [WS] Removed connection: ${connectionId}. User connections: ${finalLength}, Global: ${allActiveConnections.length}`);
-                /*const unsubscriptionData = {
-                    event: 'USER_UNSUBSCRIBED_FROM_BID',
-                    userId: obj.userId,
-                    userFIO: obj.userFIO,
-                    bidId: obj.bidId,
-                    socketId: socket.id,
-                    timestamp: new Date().toISOString(),
-                    activeHighlightsCount: allActiveConnections.length,
-                    activeUsers: allActiveConnections,
-                    userConnectionsCount: finalLength
-                };
-
-                io.to('bidActivityMonitor').emit('UNHIGHLIGHT_BID', unsubscriptionData);*/
             } else {
                 console.log(`❌ Connection not found: ${connectionId}`);
             }
         }
-    });
-
-    socket.on('GET_ACTIVE_HIGHLIGHTS', () => {
-        const activeHighlights = Array.from(activeBidHighlights.entries()).map(([userId, data]) => ({
-            userId: userId,
-            userFIO: data.userFIO,
-            bidId: data.bidId,
-            socketId: data.socketId,
-            timestamp: data.timestamp
-        }));
-
-        socket.emit('ACTIVE_HIGHLIGHTS_LIST_BIDS', {
-            event: 'ACTIVE_HIGHLIGHTS_LIST_BIDS',
-            activeHighlights: activeHighlights,
-            count: activeHighlights.length,
-            timestamp: new Date().toISOString()
-        });
     });
     /* - BID LIST */
 
@@ -239,11 +291,25 @@ io.on('connection', (socket) => {
     // Обработка отключения
     socket.on('disconnect', (reason) => {
         console.log(`❌ User disconnected: ${socket.id}, reason: ${reason}`);
-        let removedConnections = [];
+        let removedConnectionsOrgs = [];
+        let removedConnectionsBids = [];
+
+        for (const [userId, userConnections] of activeOrgHighlights.entries()) {
+            const connectionsToRemove = userConnections.filter(conn => conn.socketId === socket.id);
+            if (connectionsToRemove.length > 0) {
+                removedConnectionsOrgs.push(...connectionsToRemove);
+                const updatedConnections = userConnections.filter(conn => conn.socketId !== socket.id);
+                if (updatedConnections.length === 0) {
+                    activeOrgHighlights.delete(userId);
+                } else {
+                    activeOrgHighlights.set(userId, updatedConnections);
+                }
+            }
+        }
         for (const [userId, userConnections] of activeBidHighlights.entries()) {
             const connectionsToRemove = userConnections.filter(conn => conn.socketId === socket.id);
             if (connectionsToRemove.length > 0) {
-                removedConnections.push(...connectionsToRemove);
+                removedConnectionsBids.push(...connectionsToRemove);
                 const updatedConnections = userConnections.filter(conn => conn.socketId !== socket.id);
                 if (updatedConnections.length === 0) {
                     activeBidHighlights.delete(userId);
@@ -253,31 +319,25 @@ io.on('connection', (socket) => {
             }
         }
 
-        if (removedConnections.length > 0) {
-            const allActiveConnections = getAllActiveConnections();
-            removedConnections.forEach(connection => {
-                /*const disconnectData = {
-                    event: 'USER_DISCONNECTED_FROM_BID',
-                    userId: connection.userId,
-                    userFIO: connection.userFIO,
-                    bidId: connection.bidId,
-                    socketId: socket.id,
+        if (removedConnectionsOrgs.length > 0) {
+            const allActiveConnections = getAllActiveConnectionsOrgs();
+            removedConnectionsOrgs.forEach(connection => {
+                const activeHighlights = getActiveHighlightsOrgs();
+                io.to('orgActivityMonitor').emit('ACTIVE_HIGHLIGHTS_LIST_ORGS', {
+                    event: 'ACTIVE_HIGHLIGHTS_LIST_ORGS',
+                    activeHighlights: activeHighlights,
+                    count: activeHighlights.length,
                     timestamp: new Date().toISOString(),
-                    reason: reason,
-                    joinedAt: connection.joinedAt,
-                    duration: Date.now() - new Date(connection.joinedAt).getTime(),
-                    activeHighlightsCount: allActiveConnections.length,
                     activeUsers: allActiveConnections,
-                    userConnectionsCount: activeBidHighlights.get(connection.userId)?.length || 0
-                };
-                io.to('bidActivityMonitor').emit('UNHIGHLIGHT_BID', disconnectData);*/
-                const activeHighlights = Array.from(activeBidHighlights.entries()).map(([userId, data]) => ({
-                    userId: userId,
-                    userFIO: data.userFIO,
-                    bidId: data.bidId,
-                    socketId: data.socketId,
-                    timestamp: data.timestamp
-                }));
+                });
+                console.log(`📤 [WS] Disconnected: user ${connection.userId} from bid ${connection.orgId}`);
+            });
+            console.log(`📤 [WS] Removed ${removedConnectionsOrgs.length} connections for socket ${socket.id}. Total active: ${allActiveConnections.length}`);
+        }
+        if (removedConnectionsBids.length > 0) {
+            const allActiveConnections = getAllActiveConnectionsBids();
+            removedConnectionsBids.forEach(connection => {
+                const activeHighlights = getActiveHighlightsBids();
                 io.to('bidActivityMonitor').emit('ACTIVE_HIGHLIGHTS_LIST_BIDS', {
                     event: 'ACTIVE_HIGHLIGHTS_LIST_BIDS',
                     activeHighlights: activeHighlights,
@@ -287,17 +347,13 @@ io.on('connection', (socket) => {
                 });
                 console.log(`📤 [WS] Disconnected: user ${connection.userId} from bid ${connection.bidId}`);
             });
-            console.log(`📤 [WS] Removed ${removedConnections.length} connections for socket ${socket.id}. Total active: ${allActiveConnections.length}`);
+            console.log(`📤 [WS] Removed ${removedConnectionsBids.length} connections for socket ${socket.id}. Total active: ${allActiveConnections.length}`);
         }
     });
 })
 // ОБРАБОТЧИКИ СОБЫТИЙ SOCKET.IO ----------------------------------------------------------------
 
 // ОБРАБОТЧИКИ API ROUTES ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-const apiRoutes = [
-  '/api/sms/new-sms', // поменять у бо на message
-  '/api/sms/update-sms'
-]
 /* + CHAT */
 app.post('/api/sms/new-sms', (req, res) => {
   try {
@@ -336,6 +392,30 @@ app.post('/api/sms/update-sms', (req, res) => {
   }
 });
 /* - CHAT */
+
+/* + ORGS */
+app.post('/api/org/create', (req, res) => {
+    try {
+        io.to('orgActivityMonitor').emit('REFRESH_PAGE');
+        res.json({ status: 'ok' });
+    } catch (error) {
+        console.error('Error in API route:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+app.post('/api/org/update', (req, res) => {
+    try {
+        console.log(req.body);
+        const { org_id } = req.body.data;
+        io.to('orgActivityMonitor').emit('UPDATE_ORG', { org_id });
+        res.json({ status: 'ok' });
+    } catch (error) {
+        console.error('Error in API route:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+/* - ORGS */
+
 /* + BIDS */
 app.post('/api/bid/create', (req, res) => {
     try {
@@ -348,8 +428,9 @@ app.post('/api/bid/create', (req, res) => {
 });
 app.post('/api/bid/update', (req, res) => {
     try {
-        const { bid_id } = req.body;
-        io.to('bidActivityMonitor').emit('REFRESH_PAGE', { bid_id });
+        console.log(req.body);
+        const { bid_id } = req.body.data;
+        io.to('bidActivityMonitor').emit('REFRESH_BID', { bid_id });
         res.json({ status: 'ok' });
     } catch (error) {
         console.error('Error in API route:', error);
