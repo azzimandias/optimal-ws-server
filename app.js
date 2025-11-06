@@ -84,6 +84,15 @@ io.on('connection', (socket) => {
     })
     /* - CHAT */
 
+    /* + NOTIFICATION */
+    socket.on('subscribeToNotification', (userId) => {
+        const userRoom = `userNotification:${userId}`;
+        socket.join(userRoom);
+        console.log(`User ${socket.id} joined personal room ${userRoom}`);
+        socket.join('NOTIFICATION');
+    })
+    /* - NOTIFICATION */
+
     /* + ORG LIST */
     socket.on('SUBSCRIBE_ORG_ACTIVITY', (userId) => {
         socket.join('orgActivityMonitor');
@@ -392,6 +401,27 @@ app.post('/api/sms/update-sms', (req, res) => {
   }
 });
 /* - CHAT */
+
+/* + NOTIFICATION */
+app.post('/api/notification/engineer', (req, res) => {
+    try {
+        const route = '/api/notification/engineer';
+        const { engineers, message } = req.body;
+        const recipientRoom = engineers.map(eng => {
+            return `userNotification:${eng}`;
+        });
+
+        recipientRoom.forEach(room => {
+            io.to(room).emit('new:notification', {message});
+        });
+
+        res.json({ status: 'ok' });
+    } catch (error) {
+        console.error('Error in API route:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+/* - NOTIFICATION */
 
 /* + ORGS */
 app.post('/api/org/create', (req, res) => {
