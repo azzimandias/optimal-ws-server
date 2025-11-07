@@ -403,10 +403,11 @@ app.post('/api/sms/update-sms', (req, res) => {
 /* - CHAT */
 
 /* + NOTIFICATION */
-app.post('/api/notification/engineer', (req, res) => {
+app.post('/api/notification/engineers', (req, res) => {
     try {
-        const route = '/api/notification/engineer';
-        const { engineers, message } = req.body;
+        const route = '/api/notification/engineers';
+        const { engineers, message } = req.body.data;
+        console.log(JSON.stringify(req.body));
         const recipientRoom = engineers.map(eng => {
             return `userNotification:${eng}`;
         });
