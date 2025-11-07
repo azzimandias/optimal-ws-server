@@ -405,7 +405,6 @@ app.post('/api/sms/update-sms', (req, res) => {
 /* + NOTIFICATION */
 app.post('/api/notification/engineers', (req, res) => {
     try {
-        const route = '/api/notification/engineers';
         const { engineers, message } = req.body.data;
         console.log(JSON.stringify(req.body));
         const recipientRoom = engineers.map(eng => {
@@ -416,6 +415,46 @@ app.post('/api/notification/engineers', (req, res) => {
             io.to(room).emit('new:notification', {message});
         });
 
+        res.json({ status: 'ok' });
+    } catch (error) {
+        console.error('Error in API route:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+app.post('/api/notification/engineers-done', (req, res) => {
+    try {
+        const { user_id, bid_id, message } = req.body.data;
+        console.log(JSON.stringify(req.body));
+        const recipientRoom = `userNotification:${user_id}`;
+
+        io.to(recipientRoom).emit('new:notification', {bid_id, message});
+
+        res.json({ status: 'ok' });
+    } catch (error) {
+        console.error('Error in API route:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+app.post('/api/notification/bid-done', (req, res) => {
+    try {
+        const { user_id, bid_id, message } = req.body.data;
+        console.log(JSON.stringify(req.body));
+        const recipientRoom = `userNotification:${user_id}`;
+
+        io.to(recipientRoom).emit('new:notification', {bid_id, message});
+
+        res.json({ status: 'ok' });
+    } catch (error) {
+        console.error('Error in API route:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+app.post('/api/notification/update', (req, res) => {
+    try {
+        const { user_id, notice_id } = req.body.data;
+        console.log(JSON.stringify(req.body));
+        const recipientRoom = `userNotification:${user_id}`;
+        io.to(recipientRoom).emit('read:notification');
         res.json({ status: 'ok' });
     } catch (error) {
         console.error('Error in API route:', error);
